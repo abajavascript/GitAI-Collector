@@ -4,8 +4,12 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 
 import { authenticate } from "./auth.js";
 import type { CollectorConfig } from "./config.js";
+import { registerBundleRoutes } from "./routes/bundles.js";
+import { registerCasRoutes } from "./routes/cas.js";
 import { registerHealthRoute } from "./routes/health.js";
+import { registerLogRoutes } from "./routes/logs.js";
 import { registerMetricsRoute } from "./routes/metrics.js";
+import { registerNoteRoutes } from "./routes/notes.js";
 import { EMPTY_IDENTITY, type CollectorStore, type RowIdentity } from "./store/types.js";
 
 const BODY_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -42,6 +46,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     bodyLimit: BODY_LIMIT_BYTES,
     logger: loggerOptions(options),
+    routerOptions: { ignoreTrailingSlash: true },
   });
 
   app.decorate("config", options.config);
@@ -70,6 +75,10 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   });
   registerHealthRoute(app);
   registerMetricsRoute(app);
+  registerCasRoutes(app);
+  registerNoteRoutes(app);
+  registerLogRoutes(app);
+  registerBundleRoutes(app);
 
   app.addHook("onClose", async () => {
     await options.store.close();

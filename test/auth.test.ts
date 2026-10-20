@@ -157,13 +157,6 @@ test("a matching API key is enough when a cloud token is also sent", async () =>
 test("authenticated uploads store distinct id and decoded author identity", async () => {
   const store = openCollectorStore(":memory:");
   const app = buildApp({ config: config(), store, logger: false });
-  app.post("/api/bundles", async (request) => {
-    const record = await app.store.createBundle(request.identity, {
-      title: "probe",
-      data: { prompts: { a: 1 } },
-    });
-    return { id: record.id };
-  });
 
   const response = await app.inject({
     method: "POST",
@@ -173,6 +166,7 @@ test("authenticated uploads store distinct id and decoded author identity", asyn
       "x-distinct-id": "device-9",
       "x-author-identity": "Ex%C3%B6utf8lastname <user@example.com>",
     },
+    payload: { title: "probe", data: { prompts: { a: 1 } } },
   });
   assert.equal(response.statusCode, 200);
   const id = response.json().id as string;
@@ -194,7 +188,6 @@ test("request logs do not include API keys or bearer tokens", async () => {
   });
   const store = openCollectorStore(":memory:");
   const app = buildApp({ config: config(), store, logStream: stream });
-  app.post("/worker/logs/upload", async () => ({ accepted: 0, dropped: 0, enqueued: 0, errors: [] }));
 
   const denied = await app.inject({
     method: "POST",
@@ -207,6 +200,7 @@ test("request logs do not include API keys or bearer tokens", async () => {
     method: "POST",
     url: "/worker/logs/upload",
     headers: { "x-api-key": API_KEY, authorization: `Bearer ${CLOUD_JWT}` },
+    payload: { version: 1, events: [] },
   });
   assert.equal(allowed.statusCode, 200);
 
