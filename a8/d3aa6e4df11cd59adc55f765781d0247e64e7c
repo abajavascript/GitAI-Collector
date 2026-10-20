@@ -1,0 +1,39 @@
+src/routes/http.ts
+  s_746f6d710cdfb2::t_cf7e3cc4772509 1-47
+test/ingest.test.ts
+  s_746f6d710cdfb2::t_1193cb48a8e5b3 1-399
+test/auth.test.ts
+  s_746f6d710cdfb2::t_544e3b3ec75047 203
+  s_746f6d710cdfb2::t_b5ba069860ba8b 169
+src/routes/bundles.ts
+  s_746f6d710cdfb2::t_0c77249d243d98 1-65
+src/routes/notes.ts
+  s_746f6d710cdfb2::t_0b4a18087f3cbc 1-65
+src/routes/cas.ts
+  s_746f6d710cdfb2::t_38296638393ead 5
+  s_746f6d710cdfb2::t_dbb51940764793 1-4,6-124
+src/app.ts
+  s_746f6d710cdfb2::t_8da019c95949b4 49
+  s_746f6d710cdfb2::t_bbdf7c21906fba 78-81
+  s_746f6d710cdfb2::t_7f703dd68fb398 7-8,10,12
+package.json
+  s_746f6d710cdfb2::t_8c890902e24cfb 14
+src/routes/logs.ts
+  s_746f6d710cdfb2::t_66c13a8d274f43 1-80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a8d3aa6e4df11cd59adc55f765781d0247e64e7c",
+  "prompts": {},
+  "sessions": {
+    "s_746f6d710cdfb2": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "d9baa96a-7f05-4e84-842b-2a892bea4167",
+        "model": "auto-smart"
+      },
+      "human_author": "ABA JavaScript <abajavascript@gmail.com>"
+    }
+  }
+}
