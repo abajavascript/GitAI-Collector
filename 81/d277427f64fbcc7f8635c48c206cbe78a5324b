@@ -1,0 +1,30 @@
+src/routes/metrics.ts
+  s_8ca83b76b3589e::t_67e5963d7fd9c8 17-19,26-32,40-44,46-50,54,56-57,64-66,72
+  s_8ca83b76b3589e::t_b9ae13ab6d6fc6 1-16,20-25,33-39,45,51-53,55,58-63,67-71
+src/app.ts
+  s_8ca83b76b3589e::t_ea30b649f15675 72
+  s_8ca83b76b3589e::t_ab5192c5b922c8 8
+test/auth.test.ts
+  s_8ca83b76b3589e::t_d34877a50cbfd3 14-28
+  s_8ca83b76b3589e::t_fbe4ec1fbf02d5 111-115,124,127,145,148-152
+test/metrics.test.ts
+  s_8ca83b76b3589e::t_03186e5465676f 1-299
+package.json
+  s_8ca83b76b3589e::t_3f99136eabb61c 14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81d277427f64fbcc7f8635c48c206cbe78a5324b",
+  "prompts": {},
+  "sessions": {
+    "s_8ca83b76b3589e": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5008ffcc-05f2-4d53-91a3-115b67892d95",
+        "model": "auto-smart"
+      },
+      "human_author": "ABA JavaScript <abajavascript@gmail.com>"
+    }
+  }
+}
