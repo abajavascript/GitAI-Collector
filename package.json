@@ -11,7 +11,7 @@
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "test": "tsx --test test/config.test.ts test/store.test.ts test/health.test.ts test/auth.test.ts"
+    "test": "tsx --test test/config.test.ts test/store.test.ts test/health.test.ts test/auth.test.ts test/metrics.test.ts"
   },
   "dependencies": {
     "fastify": "^5.6.1"

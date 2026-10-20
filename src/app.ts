@@ -5,6 +5,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { authenticate } from "./auth.js";
 import type { CollectorConfig } from "./config.js";
 import { registerHealthRoute } from "./routes/health.js";
+import { registerMetricsRoute } from "./routes/metrics.js";
 import { EMPTY_IDENTITY, type CollectorStore, type RowIdentity } from "./store/types.js";
 
 const BODY_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -68,6 +69,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     request.identity = result.identity;
   });
   registerHealthRoute(app);
+  registerMetricsRoute(app);
 
   app.addHook("onClose", async () => {
     await options.store.close();

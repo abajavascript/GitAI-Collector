@@ -11,6 +11,21 @@ const API_KEY = "collector-key";
 const BEARER = "collector-token";
 const CLOUD_JWT = "git-ai-cloud-jwt";
 
+const committedEvent = {
+  t: 1_700_000_000,
+  e: 1,
+  v: { "0": 1 },
+  a: {
+    "1": "https://example.com/repo.git",
+    "2": "Ada",
+    "3": "abc123",
+    "5": "main",
+    "20": "cursor",
+    "21": "gpt-5",
+    "24": "sess-1",
+  },
+};
+
 function config() {
   return loadConfig({
     SQLITE_PATH: ":memory:",
@@ -89,28 +104,27 @@ test("authenticate decodes percent-encoded author identity and keeps an undecoda
 test("GET /health stays open and other routes require a configured credential", async () => {
   const store = openCollectorStore(":memory:");
   const app = buildApp({ config: config(), store, logger: false });
-  let handled = false;
-  app.post("/worker/metrics/upload", async () => {
-    handled = true;
-    return { errors: [] };
-  });
 
   const health = await app.inject({ method: "GET", url: "/health" });
   assert.equal(health.statusCode, 200);
 
-  const missing = await app.inject({ method: "POST", url: "/worker/metrics/upload" });
+  const missing = await app.inject({
+    method: "POST",
+    url: "/worker/metrics/upload",
+    payload: { v: 1, events: [committedEvent] },
+  });
   assert.equal(missing.statusCode, 401);
   assert.deepEqual(missing.json(), { error: "unauthorized" });
   assert.equal(missing.body.includes(API_KEY), false);
-  assert.equal(handled, false);
 
   const wrongKey = await app.inject({
     method: "POST",
     url: "/worker/metrics/upload",
     headers: { "x-api-key": "wrong-key", authorization: `Bearer ${CLOUD_JWT}` },
+    payload: { v: 1, events: [committedEvent] },
   });
   assert.equal(wrongKey.statusCode, 401);
-  assert.equal(handled, false);
+  assert.equal((await store.findMetricEventsByCommit("abc123")).length, 0);
 
   await app.close();
 });
@@ -118,7 +132,6 @@ test("GET /health stays open and other routes require a configured credential", 
 test("a matching API key is enough when a cloud token is also sent", async () => {
   const store = openCollectorStore(":memory:");
   const app = buildApp({ config: config(), store, logger: false });
-  app.post("/worker/metrics/upload", async (request) => request.identity);
 
   const response = await app.inject({
     method: "POST",
@@ -129,12 +142,14 @@ test("a matching API key is enough when a cloud token is also sent", async () =>
       "x-distinct-id": "device-1",
       "x-author-identity": "Ada%20<ada@example.com>",
     },
+    payload: { v: 1, events: [committedEvent] },
   });
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    distinctId: "device-1",
-    authorIdentity: "Ada <ada@example.com>",
-  });
+  assert.deepEqual(response.json(), { errors: [] });
+  const stored = await store.findMetricEventsByCommit("abc123");
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0]?.distinctId, "device-1");
+  assert.equal(stored[0]?.authorIdentity, "Ada <ada@example.com>");
 
   await app.close();
 });
