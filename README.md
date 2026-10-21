@@ -1,148 +1,120 @@
-# Git AI Collector
+# GitAI Collector
 
-Ingest service for the [Git AI CLI](https://github.com/git-ai-project/git-ai). It accepts the CLI's worker uploads and stores them in SQLite. Login, OAuth, Sentry, and PostHog stay on Git AI Cloud. Error telemetry from the CLI still goes to those vendors unless `telemetry_oss` is `off`.
+**GitAI Collector** — власний HTTP ingestion backend для [Git AI CLI](https://github.com/git-ai-project/git-ai). Він приймає дані, які Git AI збирає під час роботи розробника з AI-інструментами (наприклад, Cursor, Claude Code або GitHub Copilot), щоб їх можна було зберігати й надалі використовувати для **AI Usage Analytics**.
 
-Requires Node.js 22 or newer. Storage uses the built-in `node:sqlite` module, so Windows does not need a native addon.
+Це **не AI-модель**, не заміна Git AI CLI і не готова BI-платформа. Collector — приймальний компонент; зіставлення з працівниками, проєктами, PR та побудова звітів є окремими задачами.
 
-## Start the collector
+## Навіщо це потрібно
 
-Install dependencies from this repository:
+- Централізовано отримувати **AI authorship / line attribution**: які рядки коду приписано AI або людині.
+- Збирати **AI usage**: активність агентів, checkpoint/commit metrics, моделі, токени та розрахункові витрати.
+- За потреби отримувати **prompts, transcripts і daemon logs** — або свідомо вимикати ці чутливі потоки.
+- Самостійно обирати, де зберігати дані: у **Git Notes**, у **власному Collector** або розподіляти різні категорії між ними.
+- Не передавати службову OSS-телеметрію Git AI до Sentry/PostHog постачальника, вимкнувши її в CLI.
 
-```bash
-npm install
+> **Важливо:** типи даних і маршрути описані для сумісності з Git AI CLI, розглянутої станом на **21.10.2026**. Перед production перевірте версію CLI й контракт саме вашої ревізії Collector.
+
+## Як це працює
+
+```text
+Cursor / Claude Code / Copilot
+          |
+          v
+   Git AI CLI + daemon
+          |
+          +---- authorship notes ----> refs/notes/ai (Git)  [режим git_notes]
+          |                       або
+          +---- authorship notes ----> власний Collector   [режим http]
+          |
+          +---- metrics / tokens / transcripts / logs ---> Collector (за налаштуваннями)
+
+Git AI OSS error telemetry ---> Git AI vendor [ВИМКНУТИ: telemetry_oss=off]
 ```
 
-The process reads environment variables. It does not load a `.env` file. Copy `.env.example`, replace `API_KEYS` with a long random value, and export the variables in the same shell that starts the server. `PUBLIC_BASE_URL` should use the same host and port the process listens on, because bundle responses link back to that URL.
+**Git AI не робить HTTP-запит після кожного редагування файлу.** Hooks створюють локальні checkpoints; daemon пізніше відправляє накопичені дані. Відмова Collector зазвичай не блокує редагування або commit, але може призвести до затримки чи втрати окремих подій. [Деталі](docs/data-flow.md).
 
-PowerShell:
+## Швидкий запуск Collector
+
+Потрібні Git, Node.js та npm. Точні підтримувані версії Node.js і назви npm-скриптів необхідно звірити з `package.json` поточної ревізії.
 
 ```powershell
-$env:HOST = "127.0.0.1"
-$env:PORT = "8080"
-$env:SQLITE_PATH = "data/collector.sqlite"
-$env:API_KEYS = "replace-with-a-long-random-key"
-$env:BEARER_TOKENS = ""
-$env:PUBLIC_BASE_URL = "http://127.0.0.1:8080"
-npm run dev
+# Windows PowerShell
+git clone https://github.com/abajavascript/GitAI-Collector.git
+cd GitAI-Collector
+if (Test-Path package-lock.json) { npm ci } else { npm install }
+npm run  # переглянути наявні scripts у package.json
 ```
 
-bash:
-
-```bash
-export HOST=127.0.0.1
-export PORT=8080
-export SQLITE_PATH=data/collector.sqlite
-export API_KEYS=replace-with-a-long-random-key
-export BEARER_TOKENS=
-export PUBLIC_BASE_URL=http://127.0.0.1:8080
-npm run dev
-```
-
-`npm run dev` runs the TypeScript entrypoint. For a compiled process, run `npm run build` and then `npm start`. The SQLite file and its parent directory are created on startup. `data/` is gitignored.
-
-`GET /health` checks that the store is open and does not require a credential:
-
-```bash
-curl http://127.0.0.1:8080/health
-```
-
-A healthy process returns `{"ok": true}`.
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `HOST` | `127.0.0.1` | Listen address |
-| `PORT` | `8080` | Listen port |
-| `SQLITE_PATH` | `data/collector.sqlite` | SQLite file. `:memory:` keeps data in process memory |
-| `API_KEYS` | empty | Comma-separated `X-API-Key` values |
-| `BEARER_TOKENS` | empty | Comma-separated `Authorization: Bearer` tokens |
-| `PUBLIC_BASE_URL` | `http://127.0.0.1:$PORT` | Base URL used in bundle links |
-
-API keys and bearer tokens are read from the environment and are not written to logs.
-
-`GET /health` is the only route that skips authentication. Every other route accepts the request when `X-API-Key` matches a value in `API_KEYS`, or when `Authorization: Bearer` matches a value in `BEARER_TOKENS`. When both headers are present, a matching API key is enough, because the CLI also sends a Git AI Cloud login token. A request with neither match responds `401`. `X-Distinct-ID` and `X-Author-Identity` are stored with each accepted row. The CLI percent-encodes non-ASCII author identities, and those values are decoded before storage.
-
-## Install the Git AI CLI
-
-Install the official CLI on the machine that will send uploads. Run the Windows installer from a normal PowerShell window. An elevated Administrator install creates files the normal user cannot use.
-
-macOS, Linux, and Windows (WSL):
-
-```bash
-curl -sSL https://usegitai.com/install.sh | bash
-```
-
-Windows:
+1. Якщо в репозиторії є `.env.example`, скопіюйте його в `.env` (`Copy-Item .env.example .env`) і вкажіть параметри, визначені в `src/config.ts` (порт, bind address, API key, storage та інші, якщо вони передбачені реалізацією). **Не додавайте `.env` і секрети в Git.**
+2. Запустіть **наявний** у `package.json` скрипт. Нижче — PowerShell-команда, яка вибирає `dev` або `start`, не припускаючи, що конкретний скрипт існує:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://usegitai.com/install.ps1 | iex"
+$scripts = (Get-Content package.json -Raw | ConvertFrom-Json).scripts
+if ($scripts.dev) { npm run dev }
+elseif ($scripts.start) { npm start }
+else { throw 'Не знайдено scripts.dev або scripts.start; перевірте npm run' }
 ```
 
-The installer places the binary at `~/.git-ai/bin/git-ai` (`%USERPROFILE%\.git-ai\bin\git-ai.exe` on Windows), updates `PATH`, and runs `git-ai install-hooks`. Close and reopen the terminal and any IDE or agent session so the new `PATH` and hooks are picked up. Confirm the install with:
+3. Для production використовуйте зібрану версію й процес-менеджер згідно зі scripts проєкту. За аналізом Cursor локальна адреса за замовчуванням — `http://127.0.0.1:8080`; перевірте її у `src/config.ts` своєї ревізії.
 
-```bash
-git-ai --version
+```powershell
+# Перевірка, чи слухається локальний порт (це НЕ health-check API)
+Test-NetConnection 127.0.0.1 -Port 8080
 ```
 
-If hooks were not installed, run `git-ai install-hooks`. There is no per-repository setup.
+> **HTTP/HTTPS:** сам Fastify Collector, за аналізом Cursor, слухає HTTP без TLS. Для доступу з інших машин розмістіть перед ним Nginx/Caddy/Traefik із HTTPS, а HTTP-порт залиште приватним. **Не передавайте `X-API-Key`, промпти чи метрики незашифрованим HTTP через LAN/інтернет.** [Безпека й експлуатація](docs/security-and-operations.md).
 
-## Point an installed CLI at the collector
+## Підключення Git AI CLI: мінімальний приклад
 
-An existing Git AI CLI install already has the binary and hooks. Leave that install in place and retarget it with `git ai config set`. The CLI's default base URL is `https://usegitai.com`, so uploads stay on Git AI Cloud until `api_base_url` changes.
+Нижче — **Collector-only** конфігурація. Команди виконуються **на машині розробника** (PowerShell), а не на сервері Collector. URL та API key замініть своїми значеннями.
 
-The URL has to be reachable from the machine running the CLI and should match the collector's `PUBLIC_BASE_URL`. On the same machine that is `http://127.0.0.1:8080`.
-
-A saved `api_base_url` is used before `GIT_AI_API_BASE_URL`. `git ai config set api_base_url` replaces a URL already stored by an earlier `git ai config set`, or by `API_BASE` during `git-ai install-hooks`. Exporting `GIT_AI_API_BASE_URL` changes the base URL only when the config file has no `api_base_url`.
-
-This collector has no login flow. Set `api_key` to one value from the collector's `API_KEYS`. The CLI skips worker uploads unless `GIT_AI_API_KEY` or a login token is present. `GIT_AI_API_KEY` is used before `api_key` in the config file. A Git AI Cloud login token does not select this collector's URL.
-
-On macOS and Linux the file is `$HOME/.git-ai/config.json`. On Windows it is `%USERPROFILE%\.git-ai\config.json`.
-
-```bash
-git ai config set api_base_url http://127.0.0.1:8080
-git ai config set api_key replace-with-a-long-random-key
+```powershell
 git ai config set telemetry_oss off
+git ai config set disable_version_checks true
+git ai config set disable_auto_updates true
+git ai config set notes_backend.kind http
+git ai config set notes_backend.backend_url https://collector.example.com
+git ai config set api_base_url https://collector.example.com
+git ai config set prompt_storage local
+# Без тексту промптів у CAS; окремо вимикаємо transcript events:
+git ai config set feature_flags.transcript_streaming false
+git ai config set feature_flags.transcript_sweep false
+
+# Демонстраційно: поточна сесія PowerShell. Для production — secret manager.
+$env:GIT_AI_API_KEY = Read-Host 'Collector API key'
 git ai config
 ```
 
-`git ai config` prints the effective configuration. `api_base_url` in that output is the URL the CLI will call. The printed `api_key` is the value stored in the file, with most characters hidden. The same file can be edited by hand:
+API key має відповідати налаштуванню авторизації **вашого Collector**. Саме `telemetry_oss=off` вимикає сторонню OSS error/performance telemetry; інші два прапорці прибирають автоматичні перевірки версій та оновлення, але не доводять повну відсутність будь-яких зовнішніх звернень (наприклад, до Git remote).
 
-```json
-{
-  "api_base_url": "http://127.0.0.1:8080",
-  "api_key": "replace-with-a-long-random-key",
-  "prompt_storage": "default",
-  "telemetry_oss": "off"
-}
-```
+## Документація
 
-For one shell, and only when the config file has no `api_base_url`, export the variables below. They disappear when the shell exits.
-
-bash:
-
-```bash
-export GIT_AI_API_BASE_URL=http://127.0.0.1:8080
-export GIT_AI_API_KEY=replace-with-a-long-random-key
-```
-
-PowerShell:
-
-```powershell
-$env:GIT_AI_API_BASE_URL = "http://127.0.0.1:8080"
-$env:GIT_AI_API_KEY = "replace-with-a-long-random-key"
-```
-
-During `git-ai install-hooks`, the installer also saves `API_BASE` and `API_KEY` from the environment into this file when those variables are set. Those install-time names do not have the `GIT_AI_` prefix. An already installed CLI can skip another install-hooks run; `git ai config set` writes the same file.
-
-Prompt upload follows `prompt_storage`:
-
-| Value | What the CLI does with prompts |
+| Файл | Що всередині |
 | --- | --- |
-| `default` | Uploads prompts to CAS (`POST /worker/cas/upload`) and strips them from the git note |
-| `notes` | Keeps prompts in the git note |
-| `local` | Keeps prompts in the CLI's local database and does not upload them |
+| [docs/data-flow.md](docs/data-flow.md) | Потоки даних, Git Notes vs Collector, метрики, локальне зберігання, поведінка при збоях. |
+| [docs/configuration-recipes.md](docs/configuration-recipes.md) | **Готові команди для 4 режимів:** нічого не збирати; тільки Git Notes; тільки Collector; максимум Git Notes + решта в Collector. Також per-repo filtering та перевірки. |
+| [docs/security-and-operations.md](docs/security-and-operations.md) | HTTPS, privacy, вимкнення передачі до Git AI vendor, доступ, retention, операційні ризики та рекомендації для AI Usage. |
 
-`default` is the CLI default. With an API key set and no `notes_backend` of its own, the CLI also posts authorship notes to the API base URL, so those notes land in this collector.
+## API, які використовує CLI
 
-`telemetry_oss` set to `off` stops the CLI from sending error telemetry to Git AI's vendors. This collector does not receive that telemetry.
+| Маршрут | Призначення |
+| --- | --- |
+| `POST /worker/notes/upload` | Authorship notes у HTTP notes mode. |
+| `POST /worker/cas/upload` | Окремі prompt/CAS-об'єкти (`prompt_storage=default`). |
+| `POST /worker/metrics/upload` | Metrics, token usage, transcripts та інші події. |
+| `POST /worker/logs/upload` | Логи daemon і heartbeat. |
+| `POST /api/bundles` | Явне завантаження/публікація JSON bundle; не автоматичний hook upload. |
 
-After the CLI is pointed here, commits and agent checkpoints upload metrics to `POST /worker/metrics/upload`, prompts (when `prompt_storage` is `default`) to `POST /worker/cas/upload`, authorship notes to `POST /worker/notes/upload`, and daemon diagnostics to `POST /worker/logs/upload`. `POST /api/bundles` stores a JSON bundle and returns a URL for `GET /api/bundles/:id`.
+Це перелік із аналізу коду Collector у Cursor; формат payload, auth і response перевіряйте у `src/routes/*`, `src/store/*` і тестах актуальної ревізії. Не плутайте API цього open-source проєкту з керованою комерційною платформою Git AI.
+
+## Перш ніж використовувати в компанії
+
+Визначте дозволені репозиторії, юридичну підставу й згоду клієнта на збір даних, політику prompts/transcripts, зберігання та видалення, відображення Git identity у корпоративний employee ID і обмеження метрик. **AI-generated lines ≠ продуктивність розробника**. [Рекомендації для AI Usage](docs/security-and-operations.md#6-ai-usage-аналітика-що-реально-можна-вимірювати).
+
+## Джерела
+
+- [Git AI CLI — Configuration](https://usegitai.com/docs/get-started/configuration)
+- [Git AI CLI — Reference](https://usegitai.com/docs/get-started/reference)
+- [Git AI — How it works](https://usegitai.com/docs/get-started/how-git-ai-works)
+- [Git AI — Telemetry examples](https://github.com/git-ai-project/git-ai/blob/main/docs/telemetry-examples.md)
+
