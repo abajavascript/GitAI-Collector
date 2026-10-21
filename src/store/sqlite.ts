@@ -14,14 +14,17 @@ import type {
   CasWriteResult,
   CasWriteResultItem,
   CollectorStore,
+  CredentialScope,
   LogBatchInput,
   LogWriteResult,
   MetricEventWriteResult,
   MetricWriteResult,
   MetricsBatchInput,
   NoteInput,
+  NoteRecord,
   NoteWriteResult,
   RowIdentity,
+  ReadFilters,
   StoredMetricEvent,
   TokenUsageKey,
   TokenUsageRecord,
@@ -40,6 +43,7 @@ CREATE TABLE IF NOT EXISTS metric_events (
   event_id INTEGER NOT NULL,
   raw_json TEXT NOT NULL,
   repo_url TEXT,
+  repo_key TEXT,
   author TEXT,
   commit_sha TEXT,
   branch TEXT,
@@ -48,6 +52,7 @@ CREATE TABLE IF NOT EXISTS metric_events (
   session_id TEXT,
   distinct_id TEXT,
   author_identity TEXT,
+  credential_id TEXT,
   received_at TEXT NOT NULL
 );
 
@@ -55,6 +60,8 @@ CREATE INDEX IF NOT EXISTS metric_events_commit_sha ON metric_events(commit_sha)
 CREATE INDEX IF NOT EXISTS metric_events_session_id ON metric_events(session_id);
 CREATE INDEX IF NOT EXISTS metric_events_repo_url ON metric_events(repo_url);
 CREATE INDEX IF NOT EXISTS metric_events_event_id ON metric_events(event_id);
+CREATE INDEX IF NOT EXISTS metric_events_credential_id ON metric_events(credential_id);
+CREATE INDEX IF NOT EXISTS metric_events_repo_key_branch ON metric_events(repo_key, branch);
 
 CREATE TABLE IF NOT EXISTS token_usage (
   id INTEGER PRIMARY KEY,
@@ -84,14 +91,16 @@ CREATE TABLE IF NOT EXISTS token_usage (
   event_ts INTEGER NOT NULL,
   raw_json TEXT NOT NULL,
   repo_url TEXT,
+  repo_key TEXT,
   author TEXT,
   commit_sha TEXT,
   branch TEXT,
   tool TEXT,
   distinct_id TEXT,
   author_identity TEXT,
+  credential_id TEXT,
   received_at TEXT NOT NULL,
-  UNIQUE (session_id, model, speed, bucket_ts)
+  UNIQUE (credential_id, session_id, model, speed, bucket_ts)
 );
 
 CREATE TABLE IF NOT EXISTS cas_objects (
@@ -99,16 +108,22 @@ CREATE TABLE IF NOT EXISTS cas_objects (
   content_json TEXT NOT NULL,
   metadata_json TEXT NOT NULL,
   raw_json TEXT NOT NULL,
+  repo_url TEXT,
+  repo_key TEXT,
+  branch TEXT,
   distinct_id TEXT,
   author_identity TEXT,
+  credential_id TEXT,
   received_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS notes (
-  commit_sha TEXT PRIMARY KEY,
+  id INTEGER PRIMARY KEY,
+  commit_sha TEXT NOT NULL UNIQUE,
   content TEXT NOT NULL,
   distinct_id TEXT,
   author_identity TEXT,
+  credential_id TEXT,
   received_at TEXT NOT NULL
 );
 
@@ -122,12 +137,14 @@ CREATE TABLE IF NOT EXISTS log_events (
   message TEXT NOT NULL,
   fields_json TEXT NOT NULL,
   repo_url TEXT,
+  repo_key TEXT,
   git_ai_version TEXT,
   daemon_id TEXT,
   install_id TEXT,
   raw_json TEXT NOT NULL,
   distinct_id TEXT,
   author_identity TEXT,
+  credential_id TEXT,
   received_at TEXT NOT NULL
 );
 
@@ -137,8 +154,17 @@ CREATE TABLE IF NOT EXISTS bundles (
   body_json TEXT NOT NULL,
   distinct_id TEXT,
   author_identity TEXT,
+  credential_id TEXT,
   created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS token_usage_credential_id ON token_usage(credential_id);
+CREATE INDEX IF NOT EXISTS token_usage_repo_key_branch ON token_usage(repo_key, branch);
+CREATE INDEX IF NOT EXISTS cas_objects_credential_id ON cas_objects(credential_id);
+CREATE INDEX IF NOT EXISTS cas_objects_repo_key_branch ON cas_objects(repo_key, branch);
+CREATE INDEX IF NOT EXISTS notes_credential_id ON notes(credential_id);
+CREATE INDEX IF NOT EXISTS log_events_credential_id ON log_events(credential_id);
+CREATE INDEX IF NOT EXISTS log_events_repo_key ON log_events(repo_key);
+CREATE INDEX IF NOT EXISTS bundles_credential_id ON bundles(credential_id);
 `;
 
 interface Statements {
@@ -164,12 +190,14 @@ interface TokenRow extends ParsedTokenUsage {
   eventTs: number;
   rawJson: string;
   repoUrl: string | null;
+  repoKey: string | null;
   author: string | null;
   commitSha: string | null;
   branch: string | null;
   tool: string | null;
   distinctId: string | null;
   authorIdentity: string | null;
+  credentialId: string | null;
   receivedAt: string;
 }
 
@@ -228,27 +256,60 @@ export class SqliteCollectorStore implements CollectorStore {
     });
   }
 
+  listMetricEvents(scope: CredentialScope, filters: ReadFilters): Promise<StoredMetricEvent[]> {
+    return this.exclusive(() => {
+      const where = readWhere(scope, filters, { eventTs: "event_ts", eventId: "event_id", repoKey: "repo_key", branch: "branch" });
+      const rows = this.db.prepare(
+        `SELECT id, event_id, event_ts, raw_json, repo_url, repo_key, author, commit_sha, branch, tool, model, session_id,
+                distinct_id, author_identity, credential_id FROM metric_events${where.sql} ORDER BY id LIMIT ?`,
+      ).all(...where.values, filters.limit);
+      return rows.map((row) => this.metricFromRow(asRecord(row)));
+    });
+  }
+
+  listTokenUsage(scope: CredentialScope, filters: ReadFilters): Promise<TokenUsageRecord[]> {
+    return this.exclusive(() => {
+      const where = readWhere(scope, filters, { eventTs: "bucket_ts", repoKey: "repo_key", branch: "branch" });
+      const rows = this.db.prepare(
+        `SELECT id, session_id, model, speed, bucket_ts, emitted_seq,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cache_write_1h_tokens,
+                reasoning_output_tokens, total_tokens, long_context_input_tokens, long_context_output_tokens,
+                long_context_cache_read_tokens, long_context_cache_write_tokens, long_context_cache_write_1h_tokens,
+                est_cost_micro_usd, transcript_cost_micro_usd, credits, message_count, speed_inferred,
+                raw_json, repo_url, repo_key, author, commit_sha, branch, tool, distinct_id, author_identity, credential_id
+         FROM token_usage${where.sql} ORDER BY id LIMIT ?`,
+      ).all(...where.values, filters.limit);
+      return rows.map((row) => this.tokenFromRow(asRecord(row)));
+    });
+  }
+
   putCasObjects(identity: RowIdentity, objects: readonly CasObjectInput[]): Promise<CasWriteResult> {
     return this.exclusive(() => this.putCasObjectsSync(identity, objects));
   }
 
-  getCasObjects(hashes: readonly string[]): Promise<CasObjectRecord[]> {
+  getCasObjects(hashes: readonly string[], scope: CredentialScope = "*"): Promise<CasObjectRecord[]> {
     return this.exclusive(() => {
       if (hashes.length === 0) return [];
       const found = new Map<string, CasObjectRecord>();
+      const access = scopeSql(scope, "credential_id");
       const statement = this.db.prepare(
-        `SELECT hash, content_json, metadata_json, distinct_id, author_identity
-         FROM cas_objects WHERE hash IN (${placeholders(hashes.length)})`,
+        `SELECT rowid AS id, hash, content_json, metadata_json, distinct_id, author_identity, credential_id, repo_url, repo_key, branch
+         FROM cas_objects WHERE hash IN (${placeholders(hashes.length)})${access.sql}`,
       );
-      for (const row of statement.all(...hashes)) {
+      for (const row of statement.all(...hashes, ...access.values)) {
         const record = asRecord(row);
         const hash = textColumn(record, "hash");
         found.set(hash, {
+          id: integerColumn(record, "id"),
           hash,
           content: JSON.parse(textColumn(record, "content_json")) as unknown,
           metadata: stringRecord(JSON.parse(textColumn(record, "metadata_json")) as unknown),
           distinctId: nullableText(record, "distinct_id"),
           authorIdentity: nullableText(record, "author_identity"),
+          credentialId: nullableText(record, "credential_id"),
+          repoUrl: nullableText(record, "repo_url"),
+          repoKey: nullableText(record, "repo_key"),
+          branch: nullableText(record, "branch"),
         });
       }
       const records: CasObjectRecord[] = [];
@@ -260,22 +321,58 @@ export class SqliteCollectorStore implements CollectorStore {
     });
   }
 
+  listCasObjects(scope: CredentialScope, filters: ReadFilters): Promise<CasObjectRecord[]> {
+    return this.exclusive(() => {
+      const where = readWhere(scope, filters, { repoKey: "repo_key", branch: "branch", id: "rowid" });
+      const rows = this.db.prepare(
+        `SELECT rowid AS id, hash, content_json, metadata_json, credential_id, repo_url, repo_key, branch, distinct_id, author_identity
+         FROM cas_objects${where.sql} ORDER BY rowid LIMIT ?`,
+      ).all(...where.values, filters.limit);
+      return rows.map((value) => {
+        const row = asRecord(value);
+        return {
+          id: integerColumn(row, "id"),
+          hash: textColumn(row, "hash"),
+          content: JSON.parse(textColumn(row, "content_json")) as unknown,
+          metadata: stringRecord(JSON.parse(textColumn(row, "metadata_json")) as unknown),
+          credentialId: nullableText(row, "credential_id"),
+          repoUrl: nullableText(row, "repo_url"),
+          repoKey: nullableText(row, "repo_key"),
+          branch: nullableText(row, "branch"),
+          distinctId: nullableText(row, "distinct_id"),
+          authorIdentity: nullableText(row, "author_identity"),
+        };
+      });
+    });
+  }
+
   upsertNotes(identity: RowIdentity, entries: readonly NoteInput[]): Promise<NoteWriteResult> {
     return this.exclusive(() => this.upsertNotesSync(identity, entries));
   }
 
-  getNotes(commitShas: readonly string[]): Promise<Record<string, string>> {
+  getNotes(commitShas: readonly string[], scope: CredentialScope = "*"): Promise<Record<string, string>> {
     return this.exclusive(() => {
       if (commitShas.length === 0) return {};
-      const statement = this.db.prepare(
-        `SELECT commit_sha, content FROM notes WHERE commit_sha IN (${placeholders(commitShas.length)})`,
-      );
+      const access = scopeSql(scope, "credential_id");
+      const statement = this.db.prepare(`SELECT commit_sha, content FROM notes WHERE commit_sha IN (${placeholders(commitShas.length)})${access.sql}`);
       const notes: Record<string, string> = {};
-      for (const row of statement.all(...commitShas)) {
+      for (const row of statement.all(...commitShas, ...access.values)) {
         const record = asRecord(row);
         notes[textColumn(record, "commit_sha")] = textColumn(record, "content");
       }
       return notes;
+    });
+  }
+
+  listNotes(scope: CredentialScope, filters: ReadFilters): Promise<NoteRecord[]> {
+    return this.exclusive(() => {
+      const where = readWhere(scope, filters, { id: "rowid" });
+      const rows = this.db.prepare(`SELECT rowid AS id, commit_sha, content, credential_id FROM notes${where.sql} ORDER BY rowid LIMIT ?`)
+        .all(...where.values, filters.limit);
+      return rows.map((value) => {
+        const row = asRecord(value);
+        return { id: integerColumn(row, "id"), commitSha: textColumn(row, "commit_sha"), content: textColumn(row, "content"), credentialId: nullableText(row, "credential_id") };
+      });
     });
   }
 
@@ -297,6 +394,7 @@ export class SqliteCollectorStore implements CollectorStore {
           JSON.stringify(body),
           identity.distinctId,
           identity.authorIdentity,
+          identity.credentialId ?? null,
           createdAt,
         );
         return {
@@ -305,14 +403,16 @@ export class SqliteCollectorStore implements CollectorStore {
           createdAt,
           distinctId: identity.distinctId,
           authorIdentity: identity.authorIdentity,
+          credentialId: identity.credentialId ?? null,
         };
       });
     });
   }
 
-  getBundle(id: string): Promise<BundleRecord | null> {
+  getBundle(id: string, scope: CredentialScope = "*"): Promise<BundleRecord | null> {
     return this.exclusive(() => {
-      const row = this.statements.selectBundle.get(id);
+      const access = scopeSql(scope, "credential_id");
+      const row = this.db.prepare(`SELECT id, body_json, distinct_id, author_identity, credential_id, created_at FROM bundles WHERE id = ?${access.sql}`).get(id, ...access.values);
       if (row === undefined) return null;
       const record = asRecord(row);
       return {
@@ -321,6 +421,7 @@ export class SqliteCollectorStore implements CollectorStore {
         createdAt: textColumn(record, "created_at"),
         distinctId: nullableText(record, "distinct_id"),
         authorIdentity: nullableText(record, "author_identity"),
+        credentialId: nullableText(record, "credential_id"),
       };
     });
   }
@@ -377,6 +478,7 @@ export class SqliteCollectorStore implements CollectorStore {
     receivedAt: string,
   ): MetricEventWriteResult {
     const existing = this.statements.selectToken.get(
+      identity.credentialId ?? null,
       token.sessionId,
       token.model,
       token.speed,
@@ -393,7 +495,7 @@ export class SqliteCollectorStore implements CollectorStore {
     if (existing === undefined) {
       this.statements.insertToken.run(...values);
     } else {
-      this.statements.updateToken.run(...values.slice(4), ...values.slice(0, 4));
+      this.statements.updateToken.run(...values.slice(4), identity.credentialId ?? null, ...values.slice(0, 4));
     }
     this.insertMetric(identity, event, receivedAt);
     return { index, status: "stored" };
@@ -407,6 +509,7 @@ export class SqliteCollectorStore implements CollectorStore {
       event.eventId,
       JSON.stringify(event.raw),
       event.common.repoUrl,
+      repoKey(event.common.repoUrl),
       event.common.author,
       event.common.commitSha,
       event.common.branch,
@@ -415,6 +518,7 @@ export class SqliteCollectorStore implements CollectorStore {
       event.common.sessionId,
       identity.distinctId,
       identity.authorIdentity,
+      identity.credentialId ?? null,
       receivedAt,
     );
   }
@@ -453,8 +557,12 @@ export class SqliteCollectorStore implements CollectorStore {
           JSON.stringify(object.content),
           JSON.stringify(metadata),
           JSON.stringify({ hash, content: object.content, metadata }),
+          nullableMetadata(metadata, "repo_url"),
+          repoKey(nullableMetadata(metadata, "repo_url")),
+          nullableMetadata(metadata, "branch"),
           identity.distinctId,
           identity.authorIdentity,
+          identity.credentialId ?? null,
           receivedAt,
         );
         successCount += 1;
@@ -480,6 +588,7 @@ export class SqliteCollectorStore implements CollectorStore {
           entry.content,
           identity.distinctId,
           identity.authorIdentity,
+          identity.credentialId ?? null,
           receivedAt,
         );
         successCount += 1;
@@ -520,12 +629,14 @@ export class SqliteCollectorStore implements CollectorStore {
           event.message,
           event.fieldsJson,
           event.repoUrl ?? batch.repoUrl,
+          repoKey(event.repoUrl ?? batch.repoUrl),
           event.gitAiVersion ?? batch.gitAiVersion,
           batch.daemonId,
           batch.installId,
           event.rawJson,
           identity.distinctId,
           identity.authorIdentity,
+          identity.credentialId ?? null,
           receivedAt,
         );
         accepted += 1;
@@ -545,12 +656,27 @@ export class SqliteCollectorStore implements CollectorStore {
 
   private migrate(): void {
     const version = integerColumn(asRecord(this.db.prepare("PRAGMA user_version").get()), "user_version");
-    if (version > 1) {
+    if (version > 2) {
       throw new Error(`unsupported schema version ${version}`);
     }
     if (version === 0) {
       this.db.exec(SCHEMA);
-      this.db.exec("PRAGMA user_version = 1");
+      this.db.exec("PRAGMA user_version = 2");
+      return;
+    }
+    if (version === 1) {
+      for (const [table, columns] of Object.entries({
+        metric_events: ["credential_id TEXT", "repo_key TEXT"],
+        token_usage: ["credential_id TEXT", "repo_key TEXT"],
+        cas_objects: ["credential_id TEXT", "repo_url TEXT", "repo_key TEXT", "branch TEXT"],
+        notes: ["credential_id TEXT"],
+        log_events: ["credential_id TEXT", "repo_key TEXT"],
+        bundles: ["credential_id TEXT"],
+      })) {
+        for (const column of columns) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
+      }
+      this.db.exec(SCHEMA);
+      this.db.exec("PRAGMA user_version = 2");
     }
   }
 
@@ -582,12 +708,14 @@ export class SqliteCollectorStore implements CollectorStore {
       "event_ts",
       "raw_json",
       "repo_url",
+      "repo_key",
       "author",
       "commit_sha",
       "branch",
       "tool",
       "distinct_id",
       "author_identity",
+      "credential_id",
       "received_at",
     ];
     const tokenUpdate = tokenColumns.slice(4).map((column) => `${column} = ?`).join(", ");
@@ -597,25 +725,25 @@ export class SqliteCollectorStore implements CollectorStore {
       insertMetric: this.db.prepare(
         `INSERT INTO metric_events (
           event_hash, event_ts, event_id, raw_json,
-          repo_url, author, commit_sha, branch, tool, model, session_id,
-          distinct_id, author_identity, received_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          repo_url, repo_key, author, commit_sha, branch, tool, model, session_id,
+          distinct_id, author_identity, credential_id, received_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ),
       selectMetricsByCommit: this.db.prepare(
         `SELECT event_id, event_ts, raw_json, repo_url, author, commit_sha, branch, tool, model, session_id,
-                distinct_id, author_identity
+                distinct_id, author_identity, credential_id, repo_key, id
          FROM metric_events WHERE commit_sha = ? ORDER BY id`,
       ),
       selectToken: this.db.prepare(
         `SELECT emitted_seq FROM token_usage
-         WHERE session_id = ? AND model = ? AND speed = ? AND bucket_ts = ?`,
+         WHERE credential_id IS ? AND session_id = ? AND model = ? AND speed = ? AND bucket_ts = ?`,
       ),
       insertToken: this.db.prepare(
         `INSERT INTO token_usage (${tokenColumns.join(", ")}) VALUES (${placeholders(tokenColumns.length)})`,
       ),
       updateToken: this.db.prepare(
         `UPDATE token_usage SET ${tokenUpdate}
-         WHERE session_id = ? AND model = ? AND speed = ? AND bucket_ts = ?`,
+         WHERE credential_id IS ? AND session_id = ? AND model = ? AND speed = ? AND bucket_ts = ?`,
       ),
       selectTokenBucket: this.db.prepare(
         `SELECT session_id, model, speed, bucket_ts, emitted_seq,
@@ -624,38 +752,39 @@ export class SqliteCollectorStore implements CollectorStore {
                 long_context_input_tokens, long_context_output_tokens, long_context_cache_read_tokens,
                 long_context_cache_write_tokens, long_context_cache_write_1h_tokens,
                 est_cost_micro_usd, transcript_cost_micro_usd, credits, message_count, speed_inferred,
-                raw_json, repo_url, author, commit_sha, branch, tool, distinct_id, author_identity
+                raw_json, repo_url, repo_key, author, commit_sha, branch, tool, distinct_id, author_identity, credential_id, id
          FROM token_usage WHERE session_id = ? AND model = ? AND speed = ? AND bucket_ts = ?`,
       ),
       selectCas: this.db.prepare("SELECT hash FROM cas_objects WHERE hash = ?"),
       insertCas: this.db.prepare(
         `INSERT INTO cas_objects (
-          hash, content_json, metadata_json, raw_json, distinct_id, author_identity, received_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          hash, content_json, metadata_json, raw_json, repo_url, repo_key, branch, distinct_id, author_identity, credential_id, received_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ),
       upsertNote: this.db.prepare(
-        `INSERT INTO notes (commit_sha, content, distinct_id, author_identity, received_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO notes (commit_sha, content, distinct_id, author_identity, credential_id, received_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(commit_sha) DO UPDATE SET
            content = excluded.content,
            distinct_id = excluded.distinct_id,
            author_identity = excluded.author_identity,
+           credential_id = excluded.credential_id,
            received_at = excluded.received_at`,
       ),
       selectLogId: this.db.prepare("SELECT event_id FROM log_events WHERE event_id = ?"),
       insertLog: this.db.prepare(
         `INSERT INTO log_events (
           event_id, kind, logged_at, level, target, message, fields_json,
-          repo_url, git_ai_version, daemon_id, install_id, raw_json,
-          distinct_id, author_identity, received_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          repo_url, repo_key, git_ai_version, daemon_id, install_id, raw_json,
+          distinct_id, author_identity, credential_id, received_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ),
       insertBundle: this.db.prepare(
-        `INSERT INTO bundles (id, title, body_json, distinct_id, author_identity, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO bundles (id, title, body_json, distinct_id, author_identity, credential_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
       ),
       selectBundle: this.db.prepare(
-        `SELECT id, body_json, distinct_id, author_identity, created_at FROM bundles WHERE id = ?`,
+        `SELECT id, body_json, distinct_id, author_identity, credential_id, created_at FROM bundles WHERE id = ?`,
       ),
     };
   }
@@ -694,9 +823,12 @@ export class SqliteCollectorStore implements CollectorStore {
 
   private metricFromRow(row: Record<string, unknown>): StoredMetricEvent {
     return {
+      id: integerColumn(row, "id"),
       eventId: integerColumn(row, "event_id"),
       eventTs: integerColumn(row, "event_ts"),
       repoUrl: nullableText(row, "repo_url"),
+      repoKey: nullableText(row, "repo_key"),
+      credentialId: nullableText(row, "credential_id"),
       author: nullableText(row, "author"),
       commitSha: nullableText(row, "commit_sha"),
       branch: nullableText(row, "branch"),
@@ -711,6 +843,7 @@ export class SqliteCollectorStore implements CollectorStore {
 
   private tokenFromRow(row: Record<string, unknown>): TokenUsageRecord {
     return {
+      id: integerColumn(row, "id"),
       sessionId: textColumn(row, "session_id"),
       model: textColumn(row, "model"),
       speed: integerColumn(row, "speed"),
@@ -735,6 +868,8 @@ export class SqliteCollectorStore implements CollectorStore {
       speedInferred: nullableInteger(row, "speed_inferred"),
       raw: JSON.parse(textColumn(row, "raw_json")) as unknown,
       repoUrl: nullableText(row, "repo_url"),
+      repoKey: nullableText(row, "repo_key"),
+      credentialId: nullableText(row, "credential_id"),
       author: nullableText(row, "author"),
       commitSha: nullableText(row, "commit_sha"),
       branch: nullableText(row, "branch"),
@@ -761,12 +896,14 @@ function tokenRow(
     eventTs: event.eventTs,
     rawJson: JSON.stringify(event.raw),
     repoUrl: event.common.repoUrl,
+    repoKey: repoKey(event.common.repoUrl),
     author: event.common.author,
     commitSha: event.common.commitSha,
     branch: event.common.branch,
     tool: event.common.tool,
     distinctId: identity.distinctId,
     authorIdentity: identity.authorIdentity,
+    credentialId: identity.credentialId ?? null,
     receivedAt,
   };
 }
@@ -799,18 +936,67 @@ function tokenValues(row: TokenRow): SQLInputValue[] {
     row.eventTs,
     row.rawJson,
     row.repoUrl,
+    row.repoKey,
     row.author,
     row.commitSha,
     row.branch,
     row.tool,
     row.distinctId,
     row.authorIdentity,
+    row.credentialId,
     row.receivedAt,
   ];
 }
 
 function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(", ");
+}
+
+function scopeSql(scope: CredentialScope, column: string): { sql: string; values: SQLInputValue[] } {
+  if (scope === "*") return { sql: "", values: [] };
+  if (scope.length === 0) return { sql: " AND 1 = 0", values: [] };
+  return { sql: ` AND ${column} IN (${placeholders(scope.length)})`, values: [...scope] };
+}
+
+function readWhere(
+  scope: CredentialScope,
+  filters: ReadFilters,
+  columns: { eventTs?: string; eventId?: string; repoKey?: string; branch?: string; id?: string },
+): { sql: string; values: SQLInputValue[] } {
+  const conditions: string[] = ["1 = 1"];
+  const values: SQLInputValue[] = [];
+  const access = scopeSql(scope, "credential_id");
+  if (access.sql.length > 0) conditions.push(access.sql.slice(5));
+  values.push(...access.values);
+  if (filters.credentialId !== undefined) {
+    conditions.push("credential_id = ?");
+    values.push(filters.credentialId);
+  }
+  if (filters.repoKey !== undefined && columns.repoKey !== undefined) {
+    conditions.push(`${columns.repoKey} = ?`);
+    values.push(filters.repoKey);
+  }
+  if (filters.branch !== undefined && columns.branch !== undefined) {
+    conditions.push(`${columns.branch} = ?`);
+    values.push(filters.branch);
+  }
+  if (filters.from !== undefined && columns.eventTs !== undefined) {
+    conditions.push(`${columns.eventTs} >= ?`);
+    values.push(filters.from);
+  }
+  if (filters.to !== undefined && columns.eventTs !== undefined) {
+    conditions.push(`${columns.eventTs} <= ?`);
+    values.push(filters.to);
+  }
+  if (filters.eventId !== undefined && columns.eventId !== undefined) {
+    conditions.push(`${columns.eventId} = ?`);
+    values.push(filters.eventId);
+  }
+  if (filters.afterId !== undefined) {
+    conditions.push(`${columns.id ?? "id"} > ?`);
+    values.push(filters.afterId);
+  }
+  return { sql: ` WHERE ${conditions.join(" AND ")}`, values };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -860,4 +1046,23 @@ function stringRecord(value: unknown): Record<string, string> {
     if (typeof item === "string") record[key] = item;
   }
   return record;
+}
+
+function nullableMetadata(metadata: Record<string, string>, name: string): string | null {
+  const value = metadata[name]?.trim();
+  return value === undefined || value.length === 0 ? null : value;
+}
+
+/** Normalize common SSH and HTTP Git remotes to `host/path` for filtering. */
+export function repoKey(value: string | null): string | null {
+  if (value === null || value.trim().length === 0) return null;
+  let remote = value.trim().replace(/\/+$/, "").replace(/\.git$/i, "");
+  const ssh = /^(?:ssh:\/\/)?git@([^/:]+)[:/]([^/].*)$/i.exec(remote);
+  if (ssh !== null) return `${ssh[1]!.toLowerCase()}/${ssh[2]!.replace(/^\/+/, "").toLowerCase()}`;
+  try {
+    const url = new URL(remote);
+    return `${url.hostname.toLowerCase()}/${url.pathname.replace(/^\/+/, "").toLowerCase()}`;
+  } catch {
+    return remote.toLowerCase();
+  }
 }

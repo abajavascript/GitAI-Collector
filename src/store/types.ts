@@ -1,9 +1,11 @@
 export interface RowIdentity {
+  credentialId?: string | null;
   distinctId: string | null;
   authorIdentity: string | null;
 }
 
 export const EMPTY_IDENTITY: RowIdentity = {
+  credentialId: null,
   distinctId: null,
   authorIdentity: null,
 };
@@ -26,9 +28,12 @@ export interface MetricWriteResult {
 }
 
 export interface StoredMetricEvent {
+  id: number;
   eventId: number;
   eventTs: number;
   repoUrl: string | null;
+  repoKey: string | null;
+  credentialId: string | null;
   author: string | null;
   commitSha: string | null;
   branch: string | null;
@@ -48,6 +53,7 @@ export interface TokenUsageKey {
 }
 
 export interface TokenUsageRecord extends TokenUsageKey {
+  id: number;
   emittedSeq: number;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -68,6 +74,8 @@ export interface TokenUsageRecord extends TokenUsageKey {
   speedInferred: number | null;
   raw: unknown;
   repoUrl: string | null;
+  repoKey: string | null;
+  credentialId: string | null;
   author: string | null;
   commitSha: string | null;
   branch: string | null;
@@ -95,9 +103,14 @@ export interface CasWriteResult {
 }
 
 export interface CasObjectRecord {
+  id: number;
   hash: string;
   content: unknown;
   metadata: Record<string, string>;
+  credentialId: string | null;
+  repoUrl: string | null;
+  repoKey: string | null;
+  branch: string | null;
   distinctId: string | null;
   authorIdentity: string | null;
 }
@@ -143,6 +156,27 @@ export interface BundleRecord {
   createdAt: string;
   distinctId: string | null;
   authorIdentity: string | null;
+  credentialId: string | null;
+}
+
+export type CredentialScope = "*" | readonly string[];
+
+export interface ReadFilters {
+  credentialId?: string;
+  repoKey?: string;
+  branch?: string;
+  from?: number;
+  to?: number;
+  eventId?: number;
+  limit: number;
+  afterId?: number;
+}
+
+export interface NoteRecord {
+  id: number;
+  commitSha: string;
+  content: string;
+  credentialId: string | null;
 }
 
 /**
@@ -155,12 +189,16 @@ export interface CollectorStore {
   close(): Promise<void>;
   writeMetrics(identity: RowIdentity, batch: MetricsBatchInput): Promise<MetricWriteResult>;
   findMetricEventsByCommit(commitSha: string): Promise<StoredMetricEvent[]>;
+  listMetricEvents(scope: CredentialScope, filters: ReadFilters): Promise<StoredMetricEvent[]>;
   getTokenUsageBucket(key: TokenUsageKey): Promise<TokenUsageRecord | null>;
   putCasObjects(identity: RowIdentity, objects: readonly CasObjectInput[]): Promise<CasWriteResult>;
-  getCasObjects(hashes: readonly string[]): Promise<CasObjectRecord[]>;
+  getCasObjects(hashes: readonly string[], scope?: CredentialScope): Promise<CasObjectRecord[]>;
+  listCasObjects(scope: CredentialScope, filters: ReadFilters): Promise<CasObjectRecord[]>;
   upsertNotes(identity: RowIdentity, entries: readonly NoteInput[]): Promise<NoteWriteResult>;
-  getNotes(commitShas: readonly string[]): Promise<Record<string, string>>;
+  getNotes(commitShas: readonly string[], scope?: CredentialScope): Promise<Record<string, string>>;
+  listNotes(scope: CredentialScope, filters: ReadFilters): Promise<NoteRecord[]>;
   writeLogs(identity: RowIdentity, batch: LogBatchInput): Promise<LogWriteResult>;
   createBundle(identity: RowIdentity, bundle: BundleInput): Promise<BundleRecord>;
-  getBundle(id: string): Promise<BundleRecord | null>;
+  getBundle(id: string, scope?: CredentialScope): Promise<BundleRecord | null>;
+  listTokenUsage(scope: CredentialScope, filters: ReadFilters): Promise<TokenUsageRecord[]>;
 }

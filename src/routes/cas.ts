@@ -63,8 +63,11 @@ export function registerCasRoutes(app: FastifyInstance): void {
     });
 
     scope.get("/worker/cas", async (request, reply) => {
+      if (request.credential === null || (Array.isArray(request.credential.read) && request.credential.read.length === 0)) {
+        return reply.code(403).send({ error: "read access denied" });
+      }
       const hashes = queryList(request.query, "hashes");
-      const found = await app.store.getCasObjects(hashes);
+      const found = await app.store.getCasObjects(hashes, request.credential.read);
       const byHash = new Map(found.map((object) => [object.hash, object]));
       const results: { hash: string; status: "ok" | "error"; content?: unknown; error?: string }[] = [];
       let successCount = 0;

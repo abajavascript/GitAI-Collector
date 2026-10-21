@@ -36,8 +36,11 @@ export function registerNoteRoutes(app: FastifyInstance): void {
     });
 
     scope.get("/worker/notes", async (request, reply) => {
+      if (request.credential === null || (Array.isArray(request.credential.read) && request.credential.read.length === 0)) {
+        return reply.code(403).send({ error: "read access denied" });
+      }
       const commits = queryList(request.query, "commits");
-      const notes = await app.store.getNotes(commits);
+      const notes = await app.store.getNotes(commits, request.credential.read);
       if (Object.keys(notes).length === 0) {
         return reply.code(404).send({ notes: {} });
       }

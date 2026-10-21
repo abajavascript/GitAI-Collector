@@ -87,6 +87,12 @@ git ai config
 
 API key має відповідати налаштуванню авторизації **вашого Collector**. Саме `telemetry_oss=off` вимикає сторонню OSS error/performance telemetry; інші два прапорці прибирають автоматичні перевірки версій та оновлення, але не доводять повну відсутність будь-яких зовнішніх звернень (наприклад, до Git remote).
 
+## Ключі та читання даних
+
+Один `GIT_AI_API_KEY` залишається ключем, який розробник задає CLI. Він може бути персональним або командним; Collector відокремлює потоки за стабільним `id` ключа, а не за git author. Для production задайте `KEYS_FILE`: він містить секрет, право upload (`write`) і scope читання (`read`) кожного ключа. Старі `API_KEYS` та `BEARER_TOKENS` працюють, поки `KEYS_FILE` не заданий.
+
+API читання, формати файлу ключів, параметри фільтрів і правила видимості описані в [docs/read-api.md](docs/read-api.md). Prompts у відповідях API — чутливий текст: видавайте read-доступ лише тим, кому він необхідний.
+
 ## Документація
 
 | Файл | Що всередині |
@@ -94,6 +100,7 @@ API key має відповідати налаштуванню авториза�
 | [docs/data-flow.md](docs/data-flow.md) | Потоки даних, Git Notes vs Collector, метрики, локальне зберігання, поведінка при збоях. |
 | [docs/configuration-recipes.md](docs/configuration-recipes.md) | **Готові команди для 4 режимів:** нічого не збирати; тільки Git Notes; тільки Collector; максимум Git Notes + решта в Collector. Також per-repo filtering та перевірки. |
 | [docs/security-and-operations.md](docs/security-and-operations.md) | HTTPS, privacy, вимкнення передачі до Git AI vendor, доступ, retention, операційні ризики та рекомендації для AI Usage. |
+| [docs/read-api.md](docs/read-api.md) | Ключі, scope читання та HTTP API для метрик, token usage, prompts і notes. |
 
 ## API, які використовує CLI
 

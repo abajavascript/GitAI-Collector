@@ -38,7 +38,10 @@ export function registerBundleRoutes(app: FastifyInstance): void {
     scope.get("/api/bundles/:id", async (request, reply) => {
       const id = readId(request.params);
       if (id === undefined) return reply.code(404).send({ error: "bundle not found" });
-      const record = await app.store.getBundle(id);
+      if (request.credential === null || (Array.isArray(request.credential.read) && request.credential.read.length === 0)) {
+        return reply.code(403).send({ error: "read access denied" });
+      }
+      const record = await app.store.getBundle(id, request.credential.read);
       if (record === null) return reply.code(404).send({ error: "bundle not found" });
       return record.body;
     });

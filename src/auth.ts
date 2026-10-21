@@ -1,12 +1,13 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 
-import type { CollectorConfig } from "./config.js";
+import type { CollectorConfig, Credential } from "./config.js";
 import type { RowIdentity } from "./store/types.js";
 
 export interface AuthSuccess {
   ok: true;
   identity: RowIdentity;
+  credential: Credential;
 }
 
 export interface AuthFailure {
@@ -22,14 +23,14 @@ export type AuthResult = AuthSuccess | AuthFailure;
  */
 export function authenticate(
   headers: IncomingHttpHeaders,
-  config: Pick<CollectorConfig, "apiKeys" | "bearerTokens">,
+  config: Pick<CollectorConfig, "credentials">,
 ): AuthResult {
   const apiKey = headerText(headers, "x-api-key");
-  const apiKeyMatches = apiKey !== undefined && secretMatches(apiKey, config.apiKeys);
+  const apiKeyCredential = apiKey === undefined ? undefined : matchingCredential(apiKey, config.credentials);
   const bearer = readBearer(headers);
-  const bearerMatches = !apiKeyMatches && bearer !== undefined && secretMatches(bearer, config.bearerTokens);
-  if (!apiKeyMatches && !bearerMatches) return { ok: false };
-  return { ok: true, identity: readIdentity(headers) };
+  const credential = apiKeyCredential ?? (bearer === undefined ? undefined : matchingCredential(bearer, config.credentials));
+  if (credential === undefined) return { ok: false };
+  return { ok: true, identity: { ...readIdentity(headers), credentialId: credential.id }, credential };
 }
 
 function readIdentity(headers: IncomingHttpHeaders): RowIdentity {
@@ -69,13 +70,12 @@ function decodeAuthorIdentity(value: string | undefined): string | null {
   }
 }
 
-function secretMatches(candidate: string, allowed: readonly string[]): boolean {
+function matchingCredential(candidate: string, allowed: readonly Credential[]): Credential | undefined {
   const left = Buffer.from(candidate);
-  let matched = false;
   for (const value of allowed) {
-    if (fixedTimeEqual(left, Buffer.from(value))) matched = true;
+    if (fixedTimeEqual(left, Buffer.from(value.secret))) return value;
   }
-  return matched;
+  return undefined;
 }
 
 function fixedTimeEqual(left: Buffer, right: Buffer): boolean {

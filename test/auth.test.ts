@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 import test from "node:test";
 
@@ -211,4 +214,38 @@ test("request logs do not include API keys or bearer tokens", async () => {
   assert.equal(logged.includes("wrong-key"), false);
 
   await app.close();
+});
+
+test("key scopes isolate writes, reads, and repository filters", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "git-ai-collector-"));
+  const keysFile = join(directory, "keys.json");
+  writeFileSync(keysFile, JSON.stringify({ keys: [
+    { id: "ada", secret: "ada-secret", write: true, read: ["ada"] },
+    { id: "bob", secret: "bob-secret", write: true, read: ["bob"] },
+    { id: "all", secret: "all-secret", write: false, read: "*" },
+  ] }));
+  const store = openCollectorStore(":memory:");
+  const app = buildApp({ config: loadConfig({ SQLITE_PATH: ":memory:", KEYS_FILE: keysFile }), store, logger: false });
+  try {
+    const adaEvent = { ...committedEvent, t: 1_700_000_001, a: { ...committedEvent.a, "1": "https://github.com/example/repo.git" } };
+    const bobEvent = {
+      ...committedEvent,
+      t: 1_700_000_002,
+      a: { ...committedEvent.a, "1": "git@github.com:example/repo.git", "3": "bob-commit" },
+    };
+    assert.equal((await app.inject({ method: "POST", url: "/worker/metrics/upload", headers: { "x-api-key": "ada-secret" }, payload: { v: 1, events: [adaEvent] } })).statusCode, 200);
+    assert.equal((await app.inject({ method: "POST", url: "/worker/metrics/upload", headers: { "x-api-key": "bob-secret" }, payload: { v: 1, events: [bobEvent] } })).statusCode, 200);
+    assert.equal((await app.inject({ method: "POST", url: "/worker/metrics/upload", headers: { "x-api-key": "all-secret" }, payload: { v: 1, events: [] } })).statusCode, 403);
+
+    const own = await app.inject({ method: "GET", url: "/api/v1/metrics", headers: { "x-api-key": "ada-secret" } });
+    assert.equal(own.statusCode, 200);
+    assert.equal((own.json().items as unknown[]).length, 1);
+    const forbidden = await app.inject({ method: "GET", url: "/api/v1/metrics?key=bob", headers: { "x-api-key": "ada-secret" } });
+    assert.equal(forbidden.statusCode, 403);
+    const all = await app.inject({ method: "GET", url: "/api/v1/metrics?repo=https://github.com/example/repo", headers: { "x-api-key": "all-secret" } });
+    assert.equal((all.json().items as unknown[]).length, 2);
+  } finally {
+    await app.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

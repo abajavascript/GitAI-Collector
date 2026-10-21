@@ -115,6 +115,8 @@ git ai config set feature_flags.transcript_sweep false
 
 Git-автор не є надійним доказом особи: email/name можна змінити. Так само `X-Distinct-ID` — інсталяційний ідентифікатор, а не підтверджений corporate employee ID. `X-Author-Identity` та репозиторій можуть бути корисними dimensions, але не підставою для authorization.
 
+У Collector межею доступу є `id` ключа, який прийняв запис. Write-ключ із `read` тільки на свій id **не** є ключем до всієї бази. Не використовуйте git author або URL репозиторію як authorization: це дані від клієнта. Ключ із `read: "*"` навмисно бачить також старі рядки без id ключа, тому його слід видавати лише адміністраторам/аналітиці. Prompts у read API — чутливий текст; обмежте read scope, TLS, журнали доступу й retention. Детальний формат — у [API читання та ключі](read-api.md).
+
 **Для production варто визначити:**
 
 | Питання | Рекомендація |
