@@ -1,0 +1,20 @@
+README.md
+  s_df3026aace54b7::t_ccd0bad44f7fb8 148
+  s_df3026aace54b7::t_c7fc5fc349e944 88,90,92,94,96,98,100-104,107,118-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "68e8c8e9e08a95c14a0d6cd5cada8eea9d9b5c60",
+  "prompts": {},
+  "sessions": {
+    "s_df3026aace54b7": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "5c875f37-c7c7-4233-a8a4-273d6725fe0a",
+        "model": "auto-smart"
+      },
+      "human_author": "ABA JavaScript <abajavascript@gmail.com>"
+    }
+  }
+}
