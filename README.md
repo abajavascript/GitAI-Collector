@@ -85,13 +85,39 @@ git-ai --version
 
 If hooks were not installed, run `git-ai install-hooks`. There is no per-repository setup.
 
-## Point the CLI at the collector
+## Point an installed CLI at the collector
 
-The CLI skips worker uploads unless `GIT_AI_API_KEY` or a login token is present. This service has no login flow. Set the API key to one value from the collector's `API_KEYS`.
+An existing Git AI CLI install already has the binary and hooks. Leave that install in place and retarget it with `git ai config set`. The CLI's default base URL is `https://usegitai.com`, so uploads stay on Git AI Cloud until `api_base_url` changes.
 
-Set the base URL to the collector's `PUBLIC_BASE_URL`. An `api_base_url` already saved in the CLI config file is used before `GIT_AI_API_BASE_URL`. `GIT_AI_API_KEY` is used before `api_key` in that file.
+The URL has to be reachable from the machine running the CLI and should match the collector's `PUBLIC_BASE_URL`. On the same machine that is `http://127.0.0.1:8080`.
 
-For one shell:
+A saved `api_base_url` is used before `GIT_AI_API_BASE_URL`. `git ai config set api_base_url` replaces a URL already stored by an earlier `git ai config set`, or by `API_BASE` during `git-ai install-hooks`. Exporting `GIT_AI_API_BASE_URL` changes the base URL only when the config file has no `api_base_url`.
+
+This collector has no login flow. Set `api_key` to one value from the collector's `API_KEYS`. The CLI skips worker uploads unless `GIT_AI_API_KEY` or a login token is present. `GIT_AI_API_KEY` is used before `api_key` in the config file. A Git AI Cloud login token does not select this collector's URL.
+
+On macOS and Linux the file is `$HOME/.git-ai/config.json`. On Windows it is `%USERPROFILE%\.git-ai\config.json`.
+
+```bash
+git ai config set api_base_url http://127.0.0.1:8080
+git ai config set api_key replace-with-a-long-random-key
+git ai config set telemetry_oss off
+git ai config
+```
+
+`git ai config` prints the effective configuration. `api_base_url` in that output is the URL the CLI will call. The printed `api_key` is the value stored in the file, with most characters hidden. The same file can be edited by hand:
+
+```json
+{
+  "api_base_url": "http://127.0.0.1:8080",
+  "api_key": "replace-with-a-long-random-key",
+  "prompt_storage": "default",
+  "telemetry_oss": "off"
+}
+```
+
+For one shell, and only when the config file has no `api_base_url`, export the variables below. They disappear when the shell exits.
+
+bash:
 
 ```bash
 export GIT_AI_API_BASE_URL=http://127.0.0.1:8080
@@ -105,18 +131,7 @@ $env:GIT_AI_API_BASE_URL = "http://127.0.0.1:8080"
 $env:GIT_AI_API_KEY = "replace-with-a-long-random-key"
 ```
 
-To keep the collector as the target after the shell exits, write the same values into the CLI config. On macOS and Linux the file is `$HOME/.git-ai/config.json`. On Windows it is `%USERPROFILE%\.git-ai\config.json`.
-
-```json
-{
-  "api_base_url": "http://127.0.0.1:8080",
-  "api_key": "replace-with-a-long-random-key",
-  "prompt_storage": "default",
-  "telemetry_oss": "off"
-}
-```
-
-`git ai config set <key> <value>` writes that file. `git ai config` prints the effective configuration. During `git-ai install-hooks`, the installer also saves `API_BASE` and `API_KEY` from the environment into this file when those variables are set. Those install-time names do not have the `GIT_AI_` prefix.
+During `git-ai install-hooks`, the installer also saves `API_BASE` and `API_KEY` from the environment into this file when those variables are set. Those install-time names do not have the `GIT_AI_` prefix. An already installed CLI can skip another install-hooks run; `git ai config set` writes the same file.
 
 Prompt upload follows `prompt_storage`:
 
@@ -130,4 +145,4 @@ Prompt upload follows `prompt_storage`:
 
 `telemetry_oss` set to `off` stops the CLI from sending error telemetry to Git AI's vendors. This collector does not receive that telemetry.
 
-After the CLI is pointed here, commits and agent checkpoints upload metrics, prompts (when `prompt_storage` is `default`), authorship notes, and daemon diagnostics to the routes below. `POST /api/bundles` stores a JSON bundle and returns a URL for `GET /api/bundles/:id`.
+After the CLI is pointed here, commits and agent checkpoints upload metrics to `POST /worker/metrics/upload`, prompts (when `prompt_storage` is `default`) to `POST /worker/cas/upload`, authorship notes to `POST /worker/notes/upload`, and daemon diagnostics to `POST /worker/logs/upload`. `POST /api/bundles` stores a JSON bundle and returns a URL for `GET /api/bundles/:id`.
