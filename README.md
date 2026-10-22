@@ -41,21 +41,14 @@ Git AI OSS error telemetry ---> Git AI vendor [ВИМКНУТИ: telemetry_oss=o
 # Windows PowerShell
 git clone https://github.com/abajavascript/GitAI-Collector.git
 cd GitAI-Collector
-if (Test-Path package-lock.json) { npm ci } else { npm install }
-npm run  # переглянути наявні scripts у package.json
+npm ci
+Copy-Item .env.example .env
+npm run dev
 ```
 
-1. Якщо в репозиторії є `.env.example`, скопіюйте його в `.env` (`Copy-Item .env.example .env`) і вкажіть параметри, визначені в `src/config.ts` (порт, bind address, API key, storage та інші, якщо вони передбачені реалізацією). **Не додавайте `.env` і секрети в Git.**
-2. Запустіть **наявний** у `package.json` скрипт. Нижче — PowerShell-команда, яка вибирає `dev` або `start`, не припускаючи, що конкретний скрипт існує:
+У `.env` задайте параметри з `src/config.ts`: порт, bind address, `API_KEYS` або `KEYS_FILE`, шлях до SQLite. **Не додавайте `.env` і секрети в Git.** `npm run dev` і `npm start` читають цей файл з поточної теки. Окремо експортувати змінні в оболонку не потрібно. Значення, яке вже є в середовищі процесу, файл не замінює. Після зміни `.env` перезапустіть процес.
 
-```powershell
-$scripts = (Get-Content package.json -Raw | ConvertFrom-Json).scripts
-if ($scripts.dev) { npm run dev }
-elseif ($scripts.start) { npm start }
-else { throw 'Не знайдено scripts.dev або scripts.start; перевірте npm run' }
-```
-
-3. Для production використовуйте зібрану версію й процес-менеджер згідно зі scripts проєкту. За аналізом Cursor локальна адреса за замовчуванням — `http://127.0.0.1:8080`; перевірте її у `src/config.ts` своєї ревізії.
+Для production: `npm run build`, далі `npm start`. Локальна адреса за замовчуванням — `http://127.0.0.1:8080` (`HOST` і `PORT` у `src/config.ts`).
 
 ```powershell
 # Перевірка, чи слухається локальний порт (це НЕ health-check API)

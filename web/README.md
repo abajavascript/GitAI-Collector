@@ -12,6 +12,7 @@
 
 ```powershell
 # Термінал 1, корінь репозиторію
+Copy-Item .env.example .env
 npm run dev
 
 # Термінал 2
@@ -19,6 +20,8 @@ Copy-Item web\.env.example web\.env
 npm install --prefix web
 npm run dev:web
 ```
+
+`npm run dev` читає кореневий `.env` так само, як Next.js читає `web/.env`. У корені має бути `KEYS_FILE` або `API_KEYS`, і той самий секрет із правом `read` — у `COLLECTOR_READ_KEY`. Змінні оболонки файл не перезаписує.
 
 Next слухає `http://127.0.0.1:3000`. Скрипт `dev:web` у кореневому `package.json` лише запускає `web`. Зовнішній доступ — reverse proxy на Next.js. Collector для UI лишається на localhost.
 

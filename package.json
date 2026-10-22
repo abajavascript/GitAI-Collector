@@ -12,7 +12,7 @@
     "dev": "tsx src/index.ts",
     "dev:web": "npm --prefix web run dev",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "test": "tsx --test test/config.test.ts test/store.test.ts test/health.test.ts test/auth.test.ts test/metrics.test.ts test/ingest.test.ts"
+    "test": "tsx --test test/config.test.ts test/env-file.test.ts test/store.test.ts test/health.test.ts test/auth.test.ts test/metrics.test.ts test/ingest.test.ts"
   },
   "dependencies": {
     "fastify": "^5.6.1"

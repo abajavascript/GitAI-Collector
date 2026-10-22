@@ -1,10 +1,12 @@
-import { ConfigError, loadConfig } from "./config.js";
 import { buildApp } from "./app.js";
+import { ConfigError, loadConfig } from "./config.js";
+import { loadEnvFile } from "./env-file.js";
 import { openCollectorStore } from "./store/index.js";
 
 async function main(): Promise<void> {
   let config;
   try {
+    loadEnvFile();
     config = loadConfig();
   } catch (error) {
     console.error(error instanceof ConfigError ? error.message : "failed to load config");
