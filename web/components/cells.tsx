@@ -13,7 +13,15 @@ export function Clip({ value, title }: { value: string | null; title?: string | 
 export function Timestamp({ value }: { value: number }) {
   const formatted = formatUnixSeconds(value);
   if (formatted.iso === null) return <span className="mono" title={String(value)}>{formatted.label}</span>;
-  return <time className="mono" dateTime={formatted.iso} title={String(value)}>{formatted.label}</time>;
+  const splitAt = formatted.iso.indexOf("T");
+  const date = splitAt === -1 ? formatted.iso : formatted.iso.slice(0, splitAt);
+  const time = splitAt === -1 ? "" : formatted.iso.slice(splitAt + 1);
+  return (
+    <time className="mono timestamp" dateTime={formatted.iso} title={String(value)}>
+      <span>{date}</span>
+      {time.length > 0 ? <span>{time}</span> : null}
+    </time>
+  );
 }
 
 export function Cost({ micro }: { micro: number | null }) {

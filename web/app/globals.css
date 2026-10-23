@@ -137,6 +137,17 @@ header button, .login button.secondary {
 
 td .mono:not(.clip) { word-break: break-all; }
 
+td .mono.timestamp {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  line-height: 1.25;
+  overflow-wrap: normal;
+  white-space: nowrap;
+  word-break: normal;
+}
+
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
 
 table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
@@ -157,6 +168,70 @@ th { font-size: 0.75rem; letter-spacing: 0.02em; text-transform: uppercase; colo
   text-overflow: ellipsis;
   white-space: nowrap;
   vertical-align: bottom;
+}
+
+.metrics-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 0;
+}
+
+.metrics-table td {
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.metrics-table tbody:nth-of-type(even) td {
+  background: #f6f2ea;
+}
+
+.metrics-table tbody tr:first-child td {
+  border-bottom-color: #eee8dc;
+}
+
+.metrics-table .raw-row td {
+  overflow: visible;
+  padding-top: 0.25rem;
+  padding-bottom: 0.4rem;
+  border-bottom-width: 2px;
+  border-bottom-color: #cfc6b6;
+}
+
+.metrics-table tbody:last-child .raw-row td {
+  border-bottom: none;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 0.12rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.metrics-table .wrap-value {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.metrics-table .raw-row summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.metrics-table .raw-row .payload {
+  max-height: 24rem;
 }
 
 .payload {
